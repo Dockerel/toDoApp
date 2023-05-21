@@ -4,108 +4,200 @@ import {
   Text,
   View,
   TouchableOpacity,
-  TextInput,
   ScrollView,
   Alert,
+  Dimensions,
+  TextInput,
+  ActivityIndicator,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Fontisto } from "@expo/vector-icons";
+import { SimpleLineIcons } from "@expo/vector-icons";
+import * as Progress from "react-native-progress";
+import * as Haptics from "expo-haptics";
 import { theme } from "./color";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 const STORAGE_KEY = "@toDos";
+const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get("window");
 
 export default function App() {
-  const [working, setWorking] = useState(true);
+  const inputRef = React.useRef();
+  const [isLoading, setIsLoading] = useState(true);
+  const [inputFocused, setInputFocused] = useState(false);
   const [text, setText] = useState("");
   const [toDos, setToDos] = useState({});
+  const [workStatus, setWorkstatus] = useState({});
+  const [toEdit, setToEdit] = useState(false);
+  const [toEditKey, setToEditKey] = useState(0);
   useEffect(() => {
     loadTodos();
   }, []);
-  const travel = () => setWorking(false);
-  const work = () => setWorking(true);
   const onChangeText = (payload) => setText(payload);
+  const calcStatus = (obj) => {
+    let fullWork = Object.keys(obj).length;
+    let finished = Object.keys(obj).filter(
+      (k) => obj[k].finished === true
+    ).length;
+    if (fullWork !== 0) {
+      setWorkstatus(finished / fullWork);
+    } else {
+      setWorkstatus(0);
+    }
+  };
   const saveToDos = async (toSave) => {
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
   };
   const loadTodos = async () => {
     const s = await AsyncStorage.getItem(STORAGE_KEY);
-    s !== null ? setToDos(JSON.parse(s)) : {};
+    const savedTodos = s !== null ? JSON.parse(s) : JSON.parse({});
+    setToDos(savedTodos);
+    calcStatus(savedTodos);
+    setIsLoading(false);
   };
+
   const addToDo = async () => {
+    let newToDos;
     if (text === "") {
       return;
     }
-    // const newToDos = Object.assign({}, toDos, {
-    //   [Date.now()]: { text, working },
-    // });
-    const newToDos = { ...toDos, [Date.now()]: { text, working } };
+    if (toEdit) {
+      newToDos = toDos;
+      newToDos[toEditKey].text = text;
+      setToEdit(false);
+      setText("");
+    } else {
+      newToDos = { ...toDos, [Date.now()]: { text, finished: false } };
+      setText("");
+    }
     setToDos(newToDos);
+    calcStatus(newToDos);
     await saveToDos(newToDos);
-    setText("");
+  };
+
+  const finishToDo = async (key) => {
+    const newToDos = { ...toDos };
+    newToDos[key].finished = !newToDos[key].finished;
+    setToDos(newToDos);
+    calcStatus(newToDos);
+    await saveToDos(newToDos);
   };
   const deleteToDo = async (key) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert("Delete To Do?", "Are you sure?", [
       { text: "Cancel" },
       {
         text: "I'm Sure",
         style: "destructive",
-        onPress: () => {
+        onPress: async () => {
           const newToDos = { ...toDos };
           delete newToDos[key];
           setToDos(newToDos);
-          saveToDos(newToDos);
+          calcStatus(newToDos);
+          await saveToDos(newToDos);
         },
       },
     ]);
+  };
+  const editToDo = async (key) => {
+    setToEdit(true);
+    setToEditKey(key);
+    setText(toDos[key].text);
+    inputRef.current?.focus();
   };
 
   return (
     <View style={styles.container}>
       <StatusBar style="auto" />
       <View style={styles.header}>
-        <TouchableOpacity onPress={work}>
-          <Text
-            style={{ ...styles.btnText, color: working ? "white" : theme.grey }}
-          >
-            Work
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={travel}>
-          <Text
+        <Text style={{ ...styles.btnText, color: "black" }}>Work</Text>
+      </View>
+      {isLoading ? (
+        <View
+          style={{
+            marginTop: 150,
+          }}
+        >
+          <ActivityIndicator
+            color="black"
+            style={{ marginTop: 10 }}
+            size="large"
+          />
+        </View>
+      ) : (
+        <View>
+          <View style={styles.progressStatus}>
+            <View>
+              <Progress.Bar
+                progress={workStatus}
+                color="black"
+                unfilledColor="#A6A8AC"
+                borderColor={theme.bg}
+                height={4}
+                width={SCREEN_WIDTH * 0.7}
+              />
+            </View>
+            <Text style={styles.progressText}>
+              {(workStatus * 100).toFixed(0)}%
+            </Text>
+          </View>
+          <View
             style={{
-              ...styles.btnText,
-              color: !working ? "white" : theme.grey,
+              ...styles.inputContainer,
+              borderBottomColor: inputFocused ? "black" : theme.grey,
             }}
           >
-            Travel
-          </Text>
-        </TouchableOpacity>
-      </View>
-      <View>
-        <TextInput
-          value={text}
-          onSubmitEditing={addToDo}
-          onChangeText={onChangeText}
-          returnKeyType="done"
-          placeholder={working ? "Add a To Do" : "Where do you want to go?"}
-          style={styles.input}
-        />
-      </View>
-      <ScrollView>
-        {toDos !== null
-          ? Object.keys(toDos).map((key) =>
-              toDos[key].working === working ? (
-                <View style={styles.toDo} key={key}>
-                  <Text style={styles.toDoText}>{toDos[key].text}</Text>
-                  <TouchableOpacity onPress={() => deleteToDo(key)}>
-                    <Fontisto name="trash" size={18} color={theme.toDoBg} />
+            <TextInput
+              ref={inputRef}
+              value={text}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+              returnKeyType="done"
+              placeholder="Add a To Do"
+              style={styles.input}
+              onSubmitEditing={addToDo}
+              onChangeText={onChangeText}
+            />
+          </View>
+          <ScrollView style={{ marginBottom: 30 }}>
+            {toDos !== null
+              ? Object.keys(toDos).map((key) => (
+                  <TouchableOpacity
+                    style={styles.toDo}
+                    key={key}
+                    onLongPress={() => deleteToDo(key)}
+                  >
+                    <Text
+                      style={{
+                        ...styles.toDoText,
+                        textDecorationLine: toDos[key].finished
+                          ? "line-through"
+                          : null,
+                        color: toDos[key].finished ? "gray" : null,
+                      }}
+                    >
+                      {toDos[key].text}
+                    </Text>
+                    <TouchableOpacity onPress={() => editToDo(key)}>
+                      <SimpleLineIcons name="pencil" size={20} color="black" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => finishToDo(key)}>
+                      <Fontisto
+                        name={
+                          toDos[key].finished
+                            ? "checkbox-active"
+                            : "checkbox-passive"
+                        }
+                        size={18}
+                        color={theme.toDoBg}
+                      />
+                    </TouchableOpacity>
                   </TouchableOpacity>
-                </View>
-              ) : null
-            )
-          : null}
-      </ScrollView>
+                ))
+              : null}
+          </ScrollView>
+        </View>
+      )}
     </View>
   );
 }
@@ -114,39 +206,50 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.bg,
-    paddingHorizontal: 40,
+    paddingHorizontal: 20,
   },
   header: {
     justifyContent: "space-between",
     flexDirection: "row",
     marginTop: 100,
   },
+  progressStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 10,
+  },
+  progressText: {
+    marginLeft: 20,
+    fontWeight: "500",
+  },
   btnText: {
     fontSize: 38,
     fontWeight: "600",
   },
+  inputContainer: {
+    borderBottomWidth: 4,
+    borderBottomColor: theme.grey,
+    marginBottom: 40,
+  },
   input: {
-    backgroundColor: "white",
     paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 30,
+    paddingHorizontal: 10,
     marginTop: 20,
     fontSize: 18,
-    marginVertical: 20,
   },
   toDo: {
-    backgroundColor: theme.grey,
+    backgroundColor: "white",
     marginBottom: 10,
     paddingVertical: 20,
-    paddingHorizontal: 40,
+    paddingHorizontal: 30,
     borderRadius: 15,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
   toDoText: {
-    color: "white",
     fontSize: 16,
-    fontWeight: "500",
+    fontWeight: "400",
+    width: "75%",
   },
 });
